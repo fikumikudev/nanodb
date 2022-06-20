@@ -50,7 +50,8 @@ CREATE TABLE `blocks` (
   `link_account` char(65) DEFAULT NULL,
   `signature` char(128) NOT NULL,
   `work` char(16) NOT NULL,
-  `subtype` tinyint(1) DEFAULT NULL
+  `subtype` tinyint(1) DEFAULT NULL,
+  `tx_type` tinyint(1) NOT NULL
   -- UNIQUE KEY `block` (`hash`),
   -- UNIQUE KEY `height` (`account`, `height`),
   -- INDEX `account` (`account`),

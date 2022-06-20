@@ -17,23 +17,23 @@ import sqlite3
 from pprint import pprint
 from decimal import *
 
-# with open("config.json") as json_data_file:
-#     config = json.load(json_data_file)
+from block_types import *
 
-# mysql_config = config["mysql"]["connection"]
 
-add_block = (
-    "INSERT INTO blocks "
-    "(hash, amount, balance, height, local_timestamp, confirmed,"
-    "type, account, previous, representative, link, link_account, signature,"
-    "work, subtype) VALUES (%(hash)s, %(amount)s, %(balance)s, %(height)s,"
-    "%(local_timestamp)s, %(confirmed)s, %(type)s, %(account)s, %(previous)s,"
-    "%(representative)s, %(link)s, %(link_account)s, %(signature)s, %(work)s,"
-    "%(subtype)s) ON DUPLICATE KEY UPDATE amount=amount, balance=balance, height=height,"
-    "local_timestamp=local_timestamp, confirmed=confirmed, type=type, account=account,"
-    "previous=previous, representative=representative, link=link,"
-    "link_account=link_account, signature=signature, work=work, subtype=subtype"
-)
+def get_tx_type(block):
+    btype = Nanodb.EnumBlocktype(block["type"])
+    subtype = block["subtype"]
+
+    if btype == Nanodb.EnumBlocktype.state:
+        return BlockType(subtype)
+    if btype == Nanodb.EnumBlocktype.change:
+        return BlockType.CHANGE
+    if btype == Nanodb.EnumBlocktype.send:
+        return BlockType.SEND
+    if btype == Nanodb.EnumBlocktype.receive:
+        return BlockType.RECEIVE
+    if btype == Nanodb.EnumBlocktype.open:
+        return BlockType.OPEN
 
 
 def get_state_block(block):
@@ -67,19 +67,6 @@ def get_legacy_block(block):
     }
 
 
-# add_account = (
-#     "INSERT INTO accounts "
-#     "(account, frontier, open_block, representative_block, balance, modified_timestamp,"
-#     "block_count, confirmation_height, confirmation_height_frontier) VALUES (%(account)s,"
-#     "%(frontier)s, %(open_block)s, %(representative_block)s, %(balance)s,"
-#     "%(modified_timestamp)s, %(block_count)s, %(confirmation_height)s,"
-#     "%(confirmation_height_frontier)s) ON DUPLICATE KEY UPDATE frontier=frontier,"
-#     "open_block=open_block, representative_block=representative_block, balance=balance,"
-#     "modified_timestamp=modified_timestamp, block_count=block_count,"
-#     "confirmation_height=confirmation_height,"
-#     "confirmation_height_frontier=confirmation_height_frontier"
-# )
-
 add_account = (
     "INSERT INTO accounts "
     "(account, frontier, open_block, representative_block, balance, modified_timestamp,"
@@ -89,9 +76,11 @@ add_account = (
     ":confirmation_height_frontier)"
 )
 
+
 def convert_to_sqlite_decimal(data, name):
     if name in data:
         data[name] = str(data[name])
+
 
 def processAccounts(data_in):
     export_counter = 0
@@ -113,6 +102,7 @@ def processAccounts(data_in):
         convert_to_sqlite_decimal(data_account, "balance")
         convert_to_sqlite_decimal(data_account, "weight")
         convert_to_sqlite_decimal(data_account, "pending")
+
         # pprint(data_account)
         cursor.execute(add_account, data_account)
         export_counter += 1
@@ -120,6 +110,17 @@ def processAccounts(data_in):
 
     conn.commit()
     conn.close()
+
+
+add_block = (
+    "INSERT INTO blocks "
+    "(hash, amount, balance, height, local_timestamp, confirmed,"
+    "type, account, previous, representative, link, link_account, signature,"
+    "work, subtype, tx_type) VALUES (:hash, :amount, :balance, :height,"
+    ":local_timestamp, :confirmed, :type, :account, :previous,"
+    ":representative, :link, :link_account, :signature, :work,"
+    ":subtype, :tx_type)"
+)
 
 
 def processBlocks(data_in):
@@ -138,8 +139,11 @@ def processBlocks(data_in):
     conn = sqlite3.connect(db_filename)
     cursor = conn.cursor()
 
-    for data_blocks in data_in:
-        cursor.execute(add_block, data_blocks)
+    for data_block in data_in:
+        convert_to_sqlite_decimal(data_block, "balance")
+        convert_to_sqlite_decimal(data_block, "amount")
+
+        cursor.execute(add_block, data_block)
         export_counter += 1
         # print("import_count : [{}]".format(export_counter))
     conn.commit()
@@ -332,21 +336,13 @@ if args.table == "all" or args.table == "blocks":
 
             btype = block.block_type
 
-            if btype == Nanodb.EnumBlocktype.change:
-                data_block = get_legacy_block(block.block_value)
-                data_block["type"] = "5"
-            elif btype == Nanodb.EnumBlocktype.send:
-                data_block = get_legacy_block(block.block_value)
-                data_block["type"] = "4"
-            elif btype == Nanodb.EnumBlocktype.receive:
-                data_block = get_legacy_block(block.block_value)
-                data_block["type"] = "3"
-            elif btype == Nanodb.EnumBlocktype.state:
+            if btype == Nanodb.EnumBlocktype.state:
                 data_block = get_state_block(block.block_value)
-                data_block["type"] = "1"
-            elif btype == Nanodb.EnumBlocktype.open:
+            else:
                 data_block = get_legacy_block(block.block_value)
-                data_block["type"] = "2"
+
+            data_block["type"] = btype.value
+            data_block["tx_type"] = get_tx_type(data_block).value
 
             data_block["hash"] = block_key.hash.hex().upper()
             if (
@@ -522,7 +518,7 @@ if args.table == "all" or args.table == "blocks":
             if count % 10000 == 0:
                 mem_cache2.append(tmp)
                 tmp = []
-            if count % 500000 == 0:
+            if count % 10000 == 0:
                 # try:
                 #     Parallel(n_jobs=num_cores)(
                 #         delayed(processBlocks)(data_blocks)
